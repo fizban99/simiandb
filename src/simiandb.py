@@ -315,7 +315,7 @@ class Simiandb():
         if not self._is_closed:
             self._is_closed = True
             
-            if hasattr(self, '_Simiandb__vectorstore'):
+            if hasattr(self, '_vectorstore'):
                 try:
                     self._vectorstore.flush()
                     self._docstore.flush()
