@@ -235,10 +235,10 @@ class Simiandb():
         self._add_embeddings(texts, embeddings, show_progressbar)
         
         if ids is None:
-            ids = list(range(self.docs_table.nrows, self.docs_table.nrows + len(texts)))
+            ids = list(range(self._docs_table.nrows, self._docs_table.nrows + len(texts)))
             
         for textid, text in zip(ids, texts):
-            self.docs_table.append(textid, text.encode("utf8"))
+            self._docs_table.append(textid, text.encode("utf8"))
 
         return ids
 
@@ -280,8 +280,8 @@ class Simiandb():
         self._vectorstore = tables.open_file( self._storename / "embeddings.h5", mode = self._mode)
         
         batch_size = 1000
-        for i in tqdm(range(0, len(self.docs_table), batch_size), disable=not show_progressbar):
-            text_batch = [text.decode("utf8") for text in self.docs_table[i:i+batch_size]]
+        for i in tqdm(range(0, len(self._docs_table), batch_size), disable=not show_progressbar):
+            text_batch = [text.decode("utf8") for text in self._docs_table[i:i+batch_size]]
             if embeddings is not None:
                 embeddings_batch = embeddings[i:i+batch_size]
             elif self.embedding_function is not None:
