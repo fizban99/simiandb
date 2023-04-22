@@ -1,0 +1,7 @@
+tables
+langchain
+numba
+tqdm
+pathlib
+sentence_transformers
+
