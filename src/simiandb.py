@@ -251,12 +251,12 @@ class Simiandb():
         self._docs_table.create_index()
     
 
-    def _add_embeddings(self, texts, embeddings, show_progres_bar):
+    def _add_embeddings(self, texts, embeddings, show_progress_bar):
         """Calculate or use embeddings to fill the embeddings table
         """
         
         if embeddings is None and self._embedding_function is not None:
-            embeddings = self._embedding_function.embed_documents(texts, show_progres_bar=show_progres_bar)
+            embeddings = self._embedding_function.embed_documents(texts, show_progress_bar=show_progress_bar)
         
         if embeddings is not None and 'embeddings' not in self._vectorstore.root:
             dimensions = len(embeddings[0])
