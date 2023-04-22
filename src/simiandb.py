@@ -219,7 +219,7 @@ class Simiandb():
             raise ValueError("Simiandb is already closed")
 
 
-    def add_texts(self, texts, metadatas = None, ids = None, embeddings=None, show_progress_bar=True):
+    def add_texts(self, texts, metadatas = None, ids = None, embeddings=None):
         """Run more texts through the embeddings and add to the vectorstore.
         Args:
             texts (Iterable[str]): Texts to add to the vectorstore.
@@ -232,7 +232,7 @@ class Simiandb():
 
         self._check_closed()
       
-        self._add_embeddings(texts, embeddings, show_progress_bar)
+        self._add_embeddings(texts, embeddings)
         
         if ids is None:
             ids = list(range(self._docs_table.nrows, self._docs_table.nrows + len(texts)))
@@ -251,7 +251,7 @@ class Simiandb():
         self._docs_table.create_index()
     
 
-    def _add_embeddings(self, texts, embeddings, show_progress_bar):
+    def _add_embeddings(self, texts, embeddings):
         """Calculate or use embeddings to fill the embeddings table
         """
         
