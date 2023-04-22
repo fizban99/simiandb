@@ -182,7 +182,7 @@ class Simiandb():
         batch = self._vector_table.chunkshape[0]*25
         res = np.ascontiguousarray(np.empty(shape=(count,), dtype="float32"))
         end = 0
-        a = time()
+        # a = time()
         while end!=count:
             end += batch
             end = end if end <= count else count 
@@ -193,7 +193,7 @@ class Simiandb():
 
         indices = np.argpartition(res, -k)[-k:] #from https://stackoverflow.com/questions/6910641/how-do-i-get-indices-of-n-maximum-values-in-a-numpy-array
         indices = indices[np.argsort(res[indices])[::-1]]
-        print(time() -a)
+        # print(time() -a)
         return indices
 
 
