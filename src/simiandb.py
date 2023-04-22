@@ -219,7 +219,7 @@ class Simiandb():
             raise ValueError("Simiandb is already closed")
 
 
-    def add_texts(self, texts, metadatas = None, ids = None, embeddings=None, show_progressbar=True):
+    def add_texts(self, texts, metadatas = None, ids = None, embeddings=None, show_progress_bar=True):
         """Run more texts through the embeddings and add to the vectorstore.
         Args:
             texts (Iterable[str]): Texts to add to the vectorstore.
@@ -232,7 +232,7 @@ class Simiandb():
 
         self._check_closed()
       
-        self._add_embeddings(texts, embeddings, show_progressbar)
+        self._add_embeddings(texts, embeddings, show_progress_bar)
         
         if ids is None:
             ids = list(range(self._docs_table.nrows, self._docs_table.nrows + len(texts)))
@@ -251,24 +251,25 @@ class Simiandb():
         self._docs_table.create_index()
     
 
-    def _add_embeddings(self, texts, embeddings, show_progressbar):
+    def _add_embeddings(self, texts, embeddings, show_progres_bar):
         """Calculate or use embeddings to fill the embeddings table
         """
         
-        if embeddings is None and not self._embedding_function is  None:
-            embeddings = self._embedding_function.embed_documents(texts)
+        if embeddings is None and self._embedding_function is not None:
+            embeddings = self._embedding_function.embed_documents(texts, show_progres_bar=show_progres_bar)
         
-        if not embeddings is None and 'embeddings' not in self._vectorstore.root:
+        if embeddings is not None and 'embeddings' not in self._vectorstore.root:
             dimensions = len(embeddings[0])
             self._create_embeddings_table(dimensions)
         
-        if not embeddings is None :
+        if  embeddings is not None :
             self._vector_table = self._vectorstore.root.embeddings
+               
             embeddings = tofp8(np.array(embeddings, dtype=np.float32))
             self._vector_table.append(embeddings)
 
 
-    def regenerate_embeddings(self, embeddings=None, show_progressbar=True):
+    def regenerate_embeddings(self, embeddings=None, show_progress_bar=True):
         """Run existing texts through the embeddings and add to the vectorstore.
         Args:
             embeddings (Optional[List[array]], optional): Optional list of embeddings.
@@ -280,7 +281,7 @@ class Simiandb():
         self._vectorstore = tables.open_file( self._storename / "embeddings.h5", mode = self._mode)
         
         batch_size = 1000
-        for i in tqdm(range(0, len(self._docs_table), batch_size), disable=not show_progressbar):
+        for i in tqdm(range(0, len(self._docs_table), batch_size), disable=not show_progress_bar):
             text_batch = [text.decode("utf8") for text in self._docs_table[i:i+batch_size]]
             if embeddings is not None:
                 embeddings_batch = embeddings[i:i+batch_size]
@@ -288,7 +289,7 @@ class Simiandb():
                 embeddings_batch = self._embedding_function.embed_documents(text_batch)
             else:
                 raise ValueError("Neither embeddings nor embedding function provided")
-            self._add_embeddings(text_batch, embeddings_batch, show_progressbar)
+            self._add_embeddings(text_batch, embeddings_batch, show_progress_bar)
         return 
 
 
@@ -341,3 +342,5 @@ class Simiandb():
 
 if __name__ == '__main__':
     pass
+    with Simiandb("mystore",mode="w") as docdb:
+        pass
