@@ -256,7 +256,7 @@ class Simiandb():
         """
         
         if embeddings is None and self._embedding_function is not None:
-            embeddings = self._embedding_function.embed_documents(texts, show_progress_bar=show_progress_bar)
+            embeddings = self._embedding_function.embed_documents(texts)
         
         if embeddings is not None and 'embeddings' not in self._vectorstore.root:
             dimensions = len(embeddings[0])
