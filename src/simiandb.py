@@ -78,7 +78,7 @@ class BlobTable():
         """
         if "keys" not in store.root:
             # reasonable compression optimized for reading speed
-            filters = tables.Filters(complevel=5, complib='blosc:lz4', 
+            filters = tables.Filters(complevel=5, complib='blosc2:lz4', 
                                  shuffle=1, bitshuffle=0)
         
             blob_type = {"key": tables.StringCol(key_length, pos=0),
@@ -89,12 +89,12 @@ class BlobTable():
             self.keys_table = store.create_table("/", "keys", 
                                 blob_type, 
                                 filters=filters, 
-                                chunkshape=SEGM_SIZE)
+                                )
 
             # high compression optimized with a reading speed compromise
-            filters = tables.Filters(complevel=5, complib='blosc:zstd', 
+            filters = tables.Filters(complevel=5, complib='blosc2:zstd', 
                          shuffle=1, bitshuffle=0)            
-            self.values_table = store.create_earray("/", "values", atom=tables.UInt8Atom(), shape=(0,), filters=filters, chunkshape=SEGM_SIZE)  
+            self.values_table = store.create_earray("/", "values", atom=tables.UInt8Atom(), shape=(0,), filters=filters)  
         else:
             self.keys_table = store.root.keys
             self.values_table = store.root.values

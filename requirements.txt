@@ -1,10 +1,11 @@
 tables
-langchain-huggingface
+langchain_huggingface
 numba
 tqdm
 pathlib
 sentence_transformers
-stemmer
+PyStemmer
 cachetools
-bm25s
+bm25s[full]
+jax[cpu]
 
