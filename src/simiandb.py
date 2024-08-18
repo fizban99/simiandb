@@ -6,8 +6,13 @@ from numpy.lib.recfunctions import structured_to_unstructured
 from tqdm import tqdm
 from numba import njit, prange
 from time import time
+import cachetools
+from itertools import islice
+import bm25s
+import Stemmer
 
-
+BUF_SIZE = 2**24
+SEGM_SIZE = 2**16
 
 @njit('float32[:](uint8[:])', parallel=True)
 def tofp32n8(arr):
@@ -68,7 +73,7 @@ class BlobTable():
     """Class to handle a storage of variable-length values of a key-value storage
     Key is fixed length of key_length
     """
-    def __init__(self, store, key_length=20):
+    def __init__(self, store, key_length=20, in_memory_index = True):
         """Initializes class using a pytables store and a key_length value
         """
         if "keys" not in store.root:
@@ -84,12 +89,12 @@ class BlobTable():
             self.keys_table = store.create_table("/", "keys", 
                                 blob_type, 
                                 filters=filters, 
-                                chunkshape=10000)
+                                chunkshape=SEGM_SIZE)
 
             # high compression optimized with a reading speed compromise
             filters = tables.Filters(complevel=5, complib='blosc:zstd', 
                          shuffle=1, bitshuffle=0)            
-            self.values_table = store.create_earray("/", "values", atom=tables.UInt8Atom(), shape=(0,), filters=filters)  
+            self.values_table = store.create_earray("/", "values", atom=tables.UInt8Atom(), shape=(0,), filters=filters, chunkshape=SEGM_SIZE)  
         else:
             self.keys_table = store.root.keys
             self.values_table = store.root.values
@@ -97,14 +102,47 @@ class BlobTable():
         self.offset = self.values_table.nrows
         self.nrows = self.keys_table.nrows
         self._is_closed = False
+        self.in_memory_index = in_memory_index
+        if in_memory_index:
+            # Load the entire table into memory
+            keys_data = self.keys_table.read()
+            self.key_value = {r["key"].decode("utf8"):(r["offset"], r["length"]) for r in keys_data}
+            self.index_value = [value for value in self.key_value.values()]
+
+        # check if the size of the array is smaller than the buffer 
+        # and reduce the buffer to a multiple of segmsize
+        if self.nrows<= BUF_SIZE:
+            n = self.nrows % SEGM_SIZE
+            if n !=0 or self.nrows==0:
+                self.BUF_SIZE = (self.nrows // SEGM_SIZE+1)*SEGM_SIZE
+            else:
+                self.BUF_SIZE = (self.nrows // SEGM_SIZE)*SEGM_SIZE
+        else:
+            self.BUF_SIZE = BUF_SIZE
+        self._num_segm = self.BUF_SIZE // SEGM_SIZE
+        
+        
+        self._buffer = {-(ind+1):[ind,0, bytearray(SEGM_SIZE)] for ind in range(self._num_segm)}
+        self._hits = [0]*self._num_segm
+        self._curr_buffer_pos = -1
+        self._curr_buffer=bytearray()
+        # Position 2 buf_num of each segment in the queue
+        self._buffer_queue = [ind for ind in range(self._num_segm)]
+        # buf_num 2 position in the queue
+        self._bnum2seg = [-(ind+1) for ind in range(self._num_segm)]
+        self.c = cachetools.LRUCache(BUF_SIZE//SEGM_SIZE)
+        
+
     
     
     def __len__(self):
         return self.nrows
     
     def create_index(self):
-        self.keys_table.cols.key.reindex()
-    
+        if self.keys_table.colindexed["key"]:
+            self.keys_table.cols.key.reindex()
+        else:
+            self.keys_table.cols.key.create_index()
     
     def append(self, key, value):
         """Appends a key-value to the storage
@@ -126,18 +164,75 @@ class BlobTable():
         if isinstance(rownum, slice):
             return [self[ii] for ii in range(*rownum.indices(len(self)))]
         else:
-            row = self.keys_table[rownum]
-            offset = row['offset']
-            value = self.values_table.read(offset, offset+row["length"]).tobytes()
-        
+            if self.in_memory_index:
+                 # Access by position
+                offset, length =  self.index_value[rownum]  
+            else:
+                row = self.keys_table[rownum]
+                offset = row['offset']
+                length =  row["length"]
+        value = self._read_value(offset, length)
+            
         return value
 
 
     def get_value (self, key):
-        key = key.encode("utf8")
-        offset, length = [(r['offset'], r['length']) for r in self.keys_table.where(f"key=={key}")][0]
-        value = self.values_table.read(offset, offset+length).tobytes()
-        return value
+        if self.in_memory_index:
+            offset, length = self.key_value[key]
+        else:
+            where = f"key=={key.encode('utf8')}"
+            r = next(self.keys_table.where(where))
+            offset, length = r['offset'], r['length']
+        return self._read_value(offset, length)
+
+    def get_values (self, keys):
+        if self.in_memory_index:
+            return [self.get_value(key) for key in keys]
+        else:
+            # Construct the query condition by joining all keys with a bitwise OR
+            where = ' | '.join([f'(key == {key.encode("utf8")})' for key in keys])
+            result = []
+            for r in self.keys_table.where(where):
+                offset, length = (r['offset'], r['length']) 
+                result.append(self._read_value(offset, length))
+        return result
+
+
+
+    def _read_value(self, offset, length):
+        start = offset
+        stop = start + length
+        n = length
+        b = bytearray(n)
+        st=0
+        while True:
+            segm_num = start // SEGM_SIZE
+            # check if the segment is stored in the buffer
+            buffer = self.c.get(segm_num)
+            if buffer:
+                buf_start = segm_num * SEGM_SIZE
+                pos = start-buf_start
+                if stop<= buf_start + SEGM_SIZE:
+                    # retrieve the last bit of the data
+                    b[st:st+n] = memoryview(buffer[pos:pos+n])
+                    break
+                
+                else:
+                    # The data does not fit in one buffer
+                    bytes_in_buf=buf_start+SEGM_SIZE-start
+                    b[st:st+bytes_in_buf] = memoryview(buffer[pos:pos+bytes_in_buf])
+                    start += bytes_in_buf
+                    st += bytes_in_buf
+                    n -=bytes_in_buf
+                    
+            else:
+                # The segment is not in the buffer
+                buf_start = segm_num *SEGM_SIZE
+                buffer=memoryview(self.values_table.read(buf_start,buf_start+SEGM_SIZE))
+                # add new buffer
+                self.c.update({segm_num:buffer})
+
+        return b.decode("utf8")
 
 
 class Simiandb():
@@ -149,7 +244,7 @@ class Simiandb():
                 docdb = Simiandb("store")
     """
 
-    def __init__(self, storepath, embedding_function=None,  mode="a", id_length = 19):
+    def __init__(self, storepath, embedding_function=None,  mode="a", id_length = 19, in_memory_index=True):
         
         if mode not in ["a", "w", "r"]:
             raise ValueError("Mode can only be r, w or a")
@@ -166,7 +261,9 @@ class Simiandb():
         self._is_closed = False
         if 'embeddings' in self._vectorstore.root:
             self._vector_table = self._vectorstore.root.embeddings
-        self._docs_table = BlobTable(self._docstore, id_length)
+        self._docs_table = BlobTable(self._docstore, id_length, in_memory_index=in_memory_index)
+        self.stemmer = Stemmer.Stemmer("english")
+        self.retriever = bm25s.BM25.load(self._storename, load_corpus=False)
         return
     
     
@@ -175,6 +272,9 @@ class Simiandb():
         """
         return self
         
+
+
+
 
     def _get_top_indexes(self, c, k):
         count = self._vector_table.nrows
@@ -244,8 +344,10 @@ class Simiandb():
 
 
     def get_text(self, key):
-        return self._docs_table.get_value(key).decode("utf8")
+        return self._docs_table.get_value(key)
     
+    def get_texts(self, keys):
+        return self._docs_table.get_values(keys)
     
     def create_keys_index(self):
         self._docs_table.create_index()
@@ -306,8 +408,32 @@ class Simiandb():
         query_embedding = np.array(self._embedding_function.embed_query(query),dtype="float32")
         results = self._get_top_indexes(query_embedding, k)
 
-        docs = [self._docs_table[i].decode("utf8") for i in results]
+        docs = [self._docs_table[i] for i in results]
         return docs
+
+
+    def create_bm25s_index(self):
+        # corpus =  (self._docs_table[i] for i in range(100000))
+        corpus =  self._docs_table
+        corpus_tokens = bm25s.tokenize(corpus, stopwords="en", stemmer=self.stemmer)
+        self.retriever.index(corpus_tokens)
+        self.retriever.save(self._storename)
+    
+
+    def bm25s_search(self, query):
+        query_tokens = bm25s.tokenize(query, stemmer=self.stemmer)
+
+        # Get top-k results as a tuple of (doc ids, scores). Both are arrays of shape (n_queries, k)
+        results, scores = self.retriever.retrieve(query_tokens, corpus=None, k=10)
+
+        ids = []
+        for i in range(results.shape[1]):
+            doc, score = results[0, i], scores[0, i]
+            print(f"Rank {i+1} (score: {score:.2f}): {doc}")
+            ids.append(doc)
+
+        docs = [self._docs_table[i] for i in ids]
+        return docs            
 
 
     def close(self):

@@ -1,7 +1,10 @@
 tables
-langchain
+langchain-huggingface
 numba
 tqdm
 pathlib
 sentence_transformers
+stemmer
+cachetools
+bm25s
 
