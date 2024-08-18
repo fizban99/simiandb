@@ -263,7 +263,8 @@ class Simiandb():
             self._vector_table = self._vectorstore.root.embeddings
         self._docs_table = BlobTable(self._docstore, id_length, in_memory_index=in_memory_index)
         self.stemmer = Stemmer.Stemmer("english")
-        self.retriever = bm25s.BM25.load(self._storename, load_corpus=False)
+        if (self._storename / "params.index.json").exists():
+            self.retriever = bm25s.BM25.load(self._storename, load_corpus=False)
         return
     
     
